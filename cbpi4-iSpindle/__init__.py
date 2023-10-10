@@ -1,7 +1,7 @@
 
 # -*- coding: utf-8 -*-
 import os
-from aiohttp import web
+from aiohttp import web, ClientSession, TCPConnector
 import logging
 from unittest.mock import MagicMock, patch
 import asyncio
@@ -133,11 +133,12 @@ class iSpindleEndpoint(CBPiExtension):
         temp = round(float(data['temperature']), 2)
         angle = data['angle']
         battery = data['battery']
+        gravity = data['gravity']
         try:
             rssi = data['RSSI']
         except:
             rssi = 0
-        cache[key] = {'Time': time,'Temperature': temp, 'Angle': angle, 'Battery': battery, 'RSSI': rssi}
+        cache[key] = {'Time': time,'Temperature': temp, 'Angle': angle, 'Battery': battery, 'RSSI': rssi, "Gravity":gravity}
 
 
     @request_mapping(path='/gettemp/{SpindleID}', method="POST", auth_required=False)
@@ -163,7 +164,71 @@ class iSpindleEndpoint(CBPiExtension):
                         sensor_value = None
                     return sensor_value
 
+@parameters([Property.Text(label="iSpindle", configurable=True, description="Enter the name of your iSpindel"),
+             Property.Select("Service", options=["Brewersfriend"], description="Select the service type"),
+             Property.Text(label="Token", configurable=True, description="Token"),
+             Property.Text(label="Server", configurable=True, description="Enter the name of the server"),
+             Property.Select("Units", options=["SG", "Brix", "°P"], description="Displays gravity reading with this unit if the Data Type is set to Gravity. Does not convert between units, to do that modify your polynomial.")
+            ])
+
+class iSpindleForwarder(CBPiSensor):
+    
+    def __init__(self, cbpi, id, props):
+        super(iSpindleForwarder, self).__init__(cbpi, id, props)
+        self.value = 0
+        self.key = self.props.get("iSpindle", None)
+        self.service = self.props.get("Service", None)
+        self.token = self.props.get("Token", None)
+        self.server = self.props.get("Server", None)
+        self.unit = self.props.get("Units", None)
+        self.time_old = 0
+
+    async def run(self):
+        global cache
+        Spindle_name = self.props.get("iSpindle") 
+        while self.running == True:
+            async with ClientSession(connector=TCPConnector(verify_ssl=False)) as session:
+                print ('cache', cache)
+                try:
+                    if (float(cache[self.key]['Time']) > float(self.time_old)):
+                        self.time_old = float(cache[self.key]['Time'])
+                        print ("try")
+                        if self.service == "Brewersfriend":
+                            url = self.server + "/ispindel"
+                            if self.unit == "SG":
+                                url = url + "_sg"
+                            url = url + "/" + self.token
+                            print (url)
+                            name = self.key
+                            temp = cache[self.key]['Temperature']
+                            angle = cache[self.key]['Angle']
+                            battery = cache[self.key]['Battery']
+                            gravity = cache[self.key]['Gravity']
+                            rssi = cache[self.key]['RSSI']
+                            if (self.unit == "SG"):
+                                gravity_unit = "SG"
+                            else:
+                                gravity_unit = "P"
+                            forward_data = {'name':name, 'temp':temp, 'gravity': gravity, 'gravity_unit': gravity_unit, 'battery':battery, 'RSSI': rssi}
+                            print (forward_data)
+
+                        resp = await session.post(url, data=json.dumps(forward_data))
+                        if resp.status != 200:
+                            print ("bad http response")
+                            print (resp)
+                        self.log_data(cache[self.key])
+                    
+                except Exception as e:
+                    print ('Exception', e)
+                    pass
+            await asyncio.sleep(2)
+
+    def get_state(self):
+        return dict(value=self.value)
+
+
 def setup(cbpi):
     cbpi.plugin.register("iSpindle", iSpindle)
+    cbpi.plugin.register("iSpindleForwarder", iSpindleForwarder)
     cbpi.plugin.register("iSpindleEndpoint", iSpindleEndpoint)
     pass

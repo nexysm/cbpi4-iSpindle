@@ -1,7 +1,7 @@
 
 # -*- coding: utf-8 -*-
 import os
-from aiohttp import web, ClientSession, TCPConnector
+from aiohttp import web, ClientSession, TCPConnector, ClientTimeout
 import logging
 from unittest.mock import MagicMock, patch
 import asyncio
@@ -131,6 +131,7 @@ class iSpindleEndpoint(CBPiExtension):
         time = time.time()
         key = data['name']
         temp = round(float(data['temperature']), 2)
+        temp_units = data['temp_units']
         angle = data['angle']
         battery = data['battery']
         gravity = data['gravity']
@@ -138,7 +139,9 @@ class iSpindleEndpoint(CBPiExtension):
             rssi = data['RSSI']
         except:
             rssi = 0
-        cache[key] = {'Time': time,'Temperature': temp, 'Angle': angle, 'Battery': battery, 'RSSI': rssi, "Gravity":gravity}
+        cache[key] = {'Time': time,'Temperature': temp, 'Temp Units': temp_units, 'Angle': angle, 'Battery': battery, 'RSSI': rssi, "Gravity":gravity}
+
+        return web.Response(status=204)
 
 
     @request_mapping(path='/gettemp/{SpindleID}', method="POST", auth_required=False)
@@ -185,42 +188,46 @@ class iSpindleForwarder(CBPiSensor):
 
     async def run(self):
         global cache
-        Spindle_name = self.props.get("iSpindle") 
         while self.running == True:
-            async with ClientSession(connector=TCPConnector(verify_ssl=False)) as session:
-                print ('cache', cache)
-                try:
-                    if (float(cache[self.key]['Time']) > float(self.time_old)):
-                        self.time_old = float(cache[self.key]['Time'])
-                        print ("try")
-                        if self.service == "Brewersfriend":
-                            url = self.server + "/ispindel"
-                            if self.unit == "SG":
-                                url = url + "_sg"
-                            url = url + "/" + self.token
-                            print (url)
-                            name = self.key
-                            temp = cache[self.key]['Temperature']
-                            angle = cache[self.key]['Angle']
-                            battery = cache[self.key]['Battery']
-                            gravity = cache[self.key]['Gravity']
-                            rssi = cache[self.key]['RSSI']
-                            if (self.unit == "SG"):
-                                gravity_unit = "SG"
-                            else:
-                                gravity_unit = "P"
-                            forward_data = {'name':name, 'temp':temp, 'gravity': gravity, 'gravity_unit': gravity_unit, 'battery':battery, 'RSSI': rssi}
-                            print (forward_data)
+            try:
+                if (float(cache[self.key]['Time']) > float(self.time_old)):
+                    print ("kurac")
+                    self.time_old = float(cache[self.key]['Time'])
+                    if self.service == "Brewersfriend":
+                        url = self.server + "/ispindel"
+                        if self.unit == "SG":
+                            url = url + "_sg"
+                        url = url + "/" + self.token
+                        name = self.key
+                        temp = cache[self.key]['Temperature']
+                        temp_unit = cache[self.key]['Temp Units']
+                        angle = cache[self.key]['Angle']
+                        battery = cache[self.key]['Battery']
+                        gravity = cache[self.key]['Gravity']
+                        rssi = cache[self.key]['RSSI']
+                        if (self.unit == "SG"):
+                            gravity_unit = "SG"
+                        else:
+                            gravity_unit = "P"
 
-                        resp = await session.post(url, data=json.dumps(forward_data))
-                        if resp.status != 200:
-                            print ("bad http response")
-                            print (resp)
-                        self.log_data(cache[self.key])
-                    
-                except Exception as e:
-                    print ('Exception', e)
-                    pass
+                        forward_data = {'name':name, 'temp':temp, 'temp_unit':temp_unit, 'gravity': gravity, 'battery':battery, 'RSSI': rssi}
+                        # forward_data = {'name':name, 'temp':temp, 'gravity': gravity, 'battery':battery, 'RSSI': rssi}
+                        logging.info(forward_data)
+
+                        async with ClientSession(timeout=ClientTimeout(total=5), connector=TCPConnector(verify_ssl=False)) as session:
+                            print ('before resp')
+                            resp = await session.post(url, data=json.dumps(forward_data))
+                            print ('after resp')
+
+                            if resp.status == 200:
+                                logging.info("Data uploaded to Brewersfriend")
+                                self.push_update(temp)
+                                self.log_data(temp)
+
+            except Exception as e:
+                logging.error("iSpindel Forwarder Eception" + str(e))
+                pass
+
             await asyncio.sleep(2)
 
     def get_state(self):

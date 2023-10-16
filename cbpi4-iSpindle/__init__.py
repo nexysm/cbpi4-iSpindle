@@ -191,7 +191,6 @@ class iSpindleForwarder(CBPiSensor):
         while self.running == True:
             try:
                 if (float(cache[self.key]['Time']) > float(self.time_old)):
-                    print ("kurac")
                     self.time_old = float(cache[self.key]['Time'])
                     if self.service == "Brewersfriend":
                         url = self.server + "/ispindel"
@@ -215,9 +214,7 @@ class iSpindleForwarder(CBPiSensor):
                         logging.info(forward_data)
 
                         async with ClientSession(timeout=ClientTimeout(total=5), connector=TCPConnector(verify_ssl=False)) as session:
-                            print ('before resp')
                             resp = await session.post(url, data=json.dumps(forward_data))
-                            print ('after resp')
 
                             if resp.status == 200:
                                 logging.info("Data uploaded to Brewersfriend")

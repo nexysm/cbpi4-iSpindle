@@ -68,7 +68,10 @@ class iSpindle(CBPiSensor):
                 if (float(cache[self.key]['Time']) > float(self.time_old)):
                     self.time_old = float(cache[self.key]['Time'])
                     if self.props.get("Type") == "Gravity/Angle":
-                        self.value = await calcGravity(self.Polynomial, cache[self.key]['Angle'], self.props.get("Units"))
+                        if self.Polynomial == None:
+                            self.value = cache[self.key]['Gravity']
+                        else:
+                            self.value = await calcGravity(self.Polynomial, cache[self.key]['Angle'], self.props.get("Units"))
                     elif self.props.get("Type") == "DateTime":
                         self.value=float(cache[self.key]['Time'])
                     else:
